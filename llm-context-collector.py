@@ -17,7 +17,7 @@ except ImportError:
     gitignore_parser_available = False
     print("Figyelem: 'gitignore-parser' könyvtár nem található...")
 
-# ... (Konstansok változatlanok) ...
+# ... (Konstansok) ...
 DEFAULT_EXTENSIONS = [
     ".razor", ".cs", ".js", ".css", ".html", ".cshtml",
     ".json", ".xml", ".txt", ".md"
@@ -30,7 +30,8 @@ DEFAULT_IGNORE_PATTERNS = [
     ".DS_Store"
 ]
 CHARS_PER_TOKEN_ESTIMATE = 4
-HISTORY_LIMIT = 10
+# <<< MÓDOSÍTOTT RÉSZ >>>
+HISTORY_LIMIT = 30
 HISTORY_FILENAME = ".llm_context_collector_history.json"
 PROMPT_FILENAME = ".llm_context_prompts.json"
 PREVIEW_MAX_CHARS = 10000
@@ -41,7 +42,6 @@ POTENTIAL_TYPE_REGEX = r'\b[A-Z][a-zA-Z0-9_]*\b(?:<[A-Za-z0-9_,\s<>]+>)?'
 
 
 class DiffWindow(tk.Toplevel):
-    # <<< MÓDOSÍTOTT RÉSZ >>>
     def __init__(self, parent, global_explanation, diff_results, project_root):
         super().__init__(parent)
         self.title("Változások Elemzése és Elfogadása")
@@ -76,12 +76,10 @@ class DiffWindow(tk.Toplevel):
         self.file_listbox.bind("<<ListboxSelect>>", self._on_file_select)
 
         right_frame = ttk.Frame(main_pane)
-        # Súlyozás a globális magyarázat (ha van) és a diff nézet között
         right_frame.rowconfigure(1, weight=1)
         right_frame.columnconfigure(0, weight=1)
         main_pane.add(right_frame, weight=3)
 
-        # Globális magyarázat megjelenítése, ha létezik
         if self.global_explanation:
             explanation_frame = ttk.LabelFrame(right_frame, text="Globális Magyarázat", padding=5)
             explanation_frame.grid(row=0, column=0, sticky="new", pady=(0, 10))
@@ -90,11 +88,9 @@ class DiffWindow(tk.Toplevel):
             explanation_text = scrolledtext.ScrolledText(explanation_frame, wrap=tk.WORD, height=5, font=("Segoe UI", 9))
             explanation_text.pack(fill="both", expand=True)
             explanation_text.insert("1.0", self.global_explanation)
-            explanation_text.config(state=tk.DISABLED, background=self.cget('bg')) # Olvasási mód
+            explanation_text.config(state=tk.DISABLED, background=self.cget('bg'))
         
-        # A diff-et tartalmazó szövegmező
         self.text_widget = scrolledtext.ScrolledText(right_frame, wrap=tk.WORD, font=("Consolas", 10))
-        # A diff nézet a magyarázat alatt helyezkedik el
         self.text_widget.grid(row=1 if self.global_explanation else 0, column=0, sticky="nsew")
 
         self.text_widget.tag_configure("addition", foreground="#008800")
@@ -151,7 +147,6 @@ class DiffWindow(tk.Toplevel):
         self._display_diff(self.diff_results[selected_index])
 
     def _display_diff(self, result):
-        # Ez a metódus csak a self.text_widget-et módosítja, a globális magyarázatot nem
         self.text_widget.config(state=tk.NORMAL)
         self.text_widget.delete("1.0", tk.END)
 
@@ -218,7 +213,6 @@ class DiffWindow(tk.Toplevel):
 
 
 class PromptManagerWindow(tk.Toplevel):
-    # ... (Ez az osztály változatlan) ...
     def __init__(self, parent_app):
         super().__init__(parent_app.root)
         self.parent_app = parent_app
@@ -345,7 +339,8 @@ class PromptManagerWindow(tk.Toplevel):
 class LLMContextCollectorApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("LLM Kontextus Gyűjtő v8.0 (Egyesített Keresés)")
+        # <<< MÓDOSÍTOTT RÉSZ >>>
+        self.root.title("LLM Kontextus Gyűjtő v9.0 (Szerkeszthető Prompt)")
         self.root.geometry("1250x850")
 
         self.selected_folder = tk.StringVar()
@@ -355,7 +350,6 @@ class LLMContextCollectorApp:
         self.search_term = tk.StringVar()
         self.selected_prompt = tk.StringVar()
         self.ref_search_depth = tk.IntVar(value=1)
-        # <<< ÚJ/MÓDOSÍTOTT RÉSZ >>>
         self.search_in_content_var = tk.BooleanVar(value=False)
 
         self.current_gitignore_matcher = None
@@ -386,6 +380,7 @@ class LLMContextCollectorApp:
         folder_button.pack(side=tk.LEFT, padx=(0, 10))
         folder_label = ttk.Label(top_frame, textvariable=self.selected_folder, relief="sunken", padding=5)
         folder_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
         history_frame = ttk.Frame(main_frame)
         history_frame.pack(fill=tk.X, pady=(0, 5))
         history_label = ttk.Label(history_frame, text="Előzmények:")
@@ -395,7 +390,6 @@ class LLMContextCollectorApp:
         self.update_history_combobox()
         self.history_combobox.bind("<<ComboboxSelected>>", self.load_selected_history_entry)
         
-        # <<< ÚJ/MÓDOSÍTOTT RÉSZ >>>
         search_frame = ttk.Frame(main_frame)
         search_frame.pack(fill=tk.X, pady=(0, 5))
         search_label = ttk.Label(search_frame, text="Keresés fában:")
@@ -403,7 +397,6 @@ class LLMContextCollectorApp:
         search_entry = ttk.Entry(search_frame, textvariable=self.search_term, width=40)
         search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0,5))
         
-        # Új jelölőnégyzet a tartalmi kereséshez
         search_in_content_check = ttk.Checkbutton(search_frame, text="Referenciák keresése", variable=self.search_in_content_var)
         search_in_content_check.pack(side=tk.LEFT, padx=(0, 5))
         
@@ -424,8 +417,7 @@ class LLMContextCollectorApp:
         tree_frame.grid(row=0, column=0, sticky="nsew")
         tree_frame.rowconfigure(0, weight=1)
         tree_frame.columnconfigure(0, weight=1)
-        # <<< MÓDOSÍTOTT RÉSZ >>>
-        # A Treeview-ra vonatkozó egyedi betűtípus-beállítások elkerülése a TclError elhárítása érdekében.
+        
         self.tree = ttk.Treeview(tree_frame, selectmode='extended')
         self.tree.grid(row=0, column=0, sticky="nsew")
         ysb = ttk.Scrollbar(tree_frame, orient='vertical', command=self.tree.yview)
@@ -516,6 +508,16 @@ class LLMContextCollectorApp:
         prompt_edit_button = ttk.Button(prompt_frame, text="Szerkesztés...", command=self.open_prompt_manager)
         prompt_edit_button.grid(row=0, column=2, sticky="e")
         self.update_prompt_combobox()
+        # <<< ÚJ/MÓDOSÍTOTT RÉSZ >>>
+        self.prompt_combobox.bind("<<ComboboxSelected>>", self.on_prompt_template_selected)
+
+        # <<< ÚJ/MÓDOSÍTOTT RÉSZ: A SZERKESZTHETŐ PROMPT MEZŐ >>>
+        prompt_editor_frame = ttk.LabelFrame(right_vertical_pane, text="Prompt Szerkesztő", padding=5)
+        right_vertical_pane.add(prompt_editor_frame, weight=2)
+        prompt_editor_frame.rowconfigure(0, weight=1)
+        prompt_editor_frame.columnconfigure(0, weight=1)
+        self.editable_prompt_text = scrolledtext.ScrolledText(prompt_editor_frame, wrap=tk.WORD, height=8, font=("Segoe UI", 9))
+        self.editable_prompt_text.grid(row=0, column=0, sticky="nsew")
 
         selected_files_container = ttk.Frame(right_vertical_pane, padding=(0,5,0,5))
         right_vertical_pane.add(selected_files_container, weight=3)
@@ -533,9 +535,9 @@ class LLMContextCollectorApp:
         self.selected_listbox.configure(yscrollcommand=list_ysb.set)
         self.selected_listbox.bind('<<ListboxSelect>>', self.on_listbox_selection_change)
         self.selected_listbox.bind("<Delete>", lambda event: self.remove_selected_from_list())
+        
         self.listbox_context_menu = tk.Menu(self.root, tearoff=0)
         self.listbox_context_menu.add_command(label="Eltávolítás", command=self.remove_selected_from_list)
-        self.listbox_context_menu.add_separator()
         self.selected_listbox.bind("<Button-3>", self.show_listbox_context_menu)
         self.selected_listbox.bind("<Button-2>", self.show_listbox_context_menu)
 
@@ -589,7 +591,20 @@ class LLMContextCollectorApp:
     # ÚJ ÉS MÓDOSÍTOTT METÓDUSOK
     # ==============================================================================
 
-    # <<< ÚJ/MÓDOSÍTOTT RÉSZ >>>
+    # <<< ÚJ METÓDUS >>>
+    def on_prompt_template_selected(self, event=None):
+        """A prompt sablon kiválasztásakor lefutó eseménykezelő."""
+        selected_title = self.selected_prompt.get()
+        self.editable_prompt_text.delete("1.0", tk.END)
+        
+        if not selected_title or selected_title == "(Nincs)":
+            return
+
+        for prompt in self.prompts:
+            if prompt['title'] == selected_title:
+                self.editable_prompt_text.insert("1.0", prompt.get('content', ''))
+                break
+
     def process_changes_from_clipboard(self):
         try:
             clipboard_text = self.root.clipboard_get()
@@ -648,22 +663,18 @@ class LLMContextCollectorApp:
         self.status_text.set("Kész. Diff ablak megnyitása...")
         self.show_diff_window(global_explanation, diff_results)
 
-    # <<< ÚJ/MÓDOSÍTOTT RÉSZ >>>
     def _parse_llm_response(self, text: str) -> tuple[str, list]:
-        # Ez a regex egy fájl blokkot keres, hogy megtaláljuk az első kezdetét
         first_block_pattern = re.compile(r'(?:Új Fájl|Fájl):\s*', re.IGNORECASE)
         first_match = first_block_pattern.search(text)
         
         global_explanation = ""
         if first_match:
-            # A globális magyarázat minden, ami az első "Fájl:" vagy "Új Fájl:" előtt van
             global_explanation = text[:first_match.start()].strip()
         
-        # Ez a regex az összes fájl blokkot kinyeri a szövegből
         pattern = re.compile(
-            r'(Új Fájl|Fájl):\s*([^\n]+?)\s*\n\n'      # Group 1: Státusz, Group 2: Útvonal
-            r'Generated\s+([a-zA-Z]+)\n'             # Group 3: A nyelv (pl. "css", "csharp")
-            r'(.*?)'                                 # Group 4: A kód tartalma
+            r'(Új Fájl|Fájl):\s*([^\n]+?)\s*\n\n'
+            r'Generated\s+([a-zA-Z]+)\n'
+            r'(.*?)'
             r'(?=\n(?:Új Fájl|Fájl):|\s*IGNORE_WHEN_COPYING_START|\Z)',
             re.DOTALL | re.IGNORECASE
         )
@@ -679,13 +690,11 @@ class LLMContextCollectorApp:
             })
         return global_explanation, extracted_data
 
-    # <<< ÚJ/MÓDOSÍTOTT RÉSZ >>>
     def show_diff_window(self, global_explanation, diff_results):
         project_root = self.selected_folder.get()
         if project_root:
             DiffWindow(self.root, global_explanation, diff_results, project_root)
 
-    # <<< ÚJ/MÓDOSÍTOTT RÉSZ >>>
     def filter_treeview(self, event=None):
         term = self.search_term.get().lower().strip()
         search_in_content = self.search_in_content_var.get()
@@ -699,7 +708,6 @@ class LLMContextCollectorApp:
 
         self.status_text.set(f"Keresés: '{term}'..."); self.root.update_idletasks()
 
-        # 1. Fájlnév alapú keresés (mindig lefut)
         matching_file_ids_by_name = set()
         matching_folder_ids_by_name = set()
         for _, item_type, display_name, full_path in self.all_tree_items_data:
@@ -709,7 +717,6 @@ class LLMContextCollectorApp:
                 elif item_type == 'folder':
                     matching_folder_ids_by_name.add(full_path)
 
-        # 2. Tartalomalapú keresés (ha be van jelölve)
         matching_file_ids_by_content = set()
         if search_in_content:
             self.status_text.set(f"Keresés névben és tartalomban: '{term}'..."); self.root.update_idletasks()
@@ -722,15 +729,12 @@ class LLMContextCollectorApp:
                 except Exception as e:
                     print(f"Hiba a tartalomkeresés közben: {file_path} - {e}")
 
-        # 3. Találati halmazok egyesítése
         final_matching_file_ids = matching_file_ids_by_name.union(matching_file_ids_by_content)
         ref_only_ids = matching_file_ids_by_content - matching_file_ids_by_name
 
-        # 4. Megjelenítendő elemek és szüleik listájának összeállítása
         all_ids_to_display = set()
         parents_to_add = set()
 
-        # Fájl találatok és szülőmappáik hozzáadása
         for item_id in final_matching_file_ids:
             all_ids_to_display.add(item_id)
             parent_id = self.all_tree_items_map.get(item_id, (None, None, None))[0]
@@ -739,12 +743,10 @@ class LLMContextCollectorApp:
                 parent_id = self.all_tree_items_map.get(parent_id, (None, None, None))[0]
         all_ids_to_display.update(parents_to_add)
 
-        # Mappa találatok és összes leszármazottjuk hozzáadása
         for folder_id in matching_folder_ids_by_name:
             all_ids_to_display.add(folder_id)
             all_ids_to_display.update(self._get_all_descendants(folder_id))
 
-        # 5. Adatstruktúra létrehozása a Treeview számára, a [REF] előtaggal
         items_to_display_data = []
         for item in self.all_tree_items_data:
             parent, type, name, path = item
@@ -755,7 +757,6 @@ class LLMContextCollectorApp:
                 else:
                     items_to_display_data.append(item)
         
-        # 6. Treeview frissítése és mappák kinyitása
         self._populate_tree_from_data(items_to_display_data)
 
         for item_id in parents_to_add:
@@ -765,7 +766,6 @@ class LLMContextCollectorApp:
 
         self.status_text.set(f"{len(final_matching_file_ids) + len(matching_folder_ids_by_name)} elem található.")
 
-    # <<< ÚJ/MÓDOSÍTOTT RÉSZ >>>
     def add_selected_to_list(self):
         selected_ids = self.tree.selection()
         if not selected_ids:
@@ -780,7 +780,6 @@ class LLMContextCollectorApp:
         current_list_items = set(self.selected_listbox.get(0, tk.END))
         files_to_add_rel = set()
 
-        # Rekurzív segédfüggvény, amely a *látható* fájlokat gyűjti össze a fában
         def collect_visible_files_from_tree(folder_id):
             for child_id in self.tree.get_children(folder_id):
                 values = self.tree.item(child_id, 'values')
@@ -794,7 +793,6 @@ class LLMContextCollectorApp:
                 elif child_type == 'folder':
                     collect_visible_files_from_tree(child_id)
 
-        # Fájlok gyűjtése a kiválasztásból
         for item_id in selected_ids:
             values = self.tree.item(item_id, 'values')
             if not values: continue
@@ -805,7 +803,6 @@ class LLMContextCollectorApp:
                     files_to_add_rel.add(pathlib.Path(item_path_str).relative_to(base_path).as_posix())
                 except ValueError: pass
             elif item_type == 'folder':
-                # Itt a módosított logika: csak a látható leszármazottakat gyűjtjük
                 collect_visible_files_from_tree(item_id)
         
         newly_added = files_to_add_rel - current_list_items
@@ -821,15 +818,12 @@ class LLMContextCollectorApp:
         else:
             self.status_text.set("Nincs új fájl hozzáadva (már a listán voltak).")
 
-        # Ez a funkció (C# specifikus ref. keresés) megmaradt, ahogy a kódban volt
         if self.ref_search_depth.get() > 0:
             self.find_related_references()
 
-    # <<< ÚJ/MÓDOSÍTOTT RÉSZ >>>
     def clear_search(self):
         self.search_term.set("")
         self.search_in_content_var.set(False)
-        # Újratöltjük a teljes fát az eredeti, [REF] nélküli adatokból
         if self.all_tree_items_data:
             self._populate_tree_from_data(self.all_tree_items_data)
         self.status_text.set("Fa nézet visszaállítva.")
@@ -844,11 +838,9 @@ class LLMContextCollectorApp:
                 return content
             except (UnicodeDecodeError, IOError):
                 continue
-        # print(f"Figyelem: Nem sikerült a fájl olvasása (tartalmi kereséshez): {file_path}")
         return ""
 
     def load_latest_history(self):
-        """Indításkor betölti a legutóbbi előzményt."""
         if not self.history_entries:
             self.status_text.set("Készen áll. Nincs betölthető előzmény.")
             return
@@ -858,11 +850,9 @@ class LLMContextCollectorApp:
         if not self._load_history_entry_data(latest_entry):
             self.status_text.set("Hiba a legutóbbi előzmény betöltésekor. Ellenőrizd a mappát.")
 
+    # <<< MÓDOSÍTOTT RÉSZ >>>
     def _load_history_entry_data(self, entry_to_load):
-        """
-        Belső segédfüggvény egy előzmény-bejegyzés adatainak betöltésére.
-        Visszatérési érték: True (siker), False (hiba).
-        """
+        """Belső segédfüggvény egy előzmény-bejegyzés adatainak betöltésére."""
         try:
             folder = entry_to_load.get("root_folder")
             if not folder or not os.path.isdir(folder):
@@ -876,12 +866,27 @@ class LLMContextCollectorApp:
             self.ignore_text.delete("1.0", tk.END)
             self.ignore_text.insert("1.0", entry_to_load.get("ignore_filter", ""))
             
-            prompt_to_load = entry_to_load.get("prompt_template", "(Nincs)")
-            if prompt_to_load in self.prompt_combobox['values']:
-                self.selected_prompt.set(prompt_to_load)
+            # A prompt mező és a sablonválasztó feltöltése
+            self.editable_prompt_text.delete("1.0", tk.END)
+            prompt_text_from_history = entry_to_load.get("prompt_text")
             
-            self.apply_filters() 
+            # Visszafelé kompatibilitás: ha az új 'prompt_text' mező létezik
+            if prompt_text_from_history is not None:
+                self.editable_prompt_text.insert("1.0", prompt_text_from_history)
+                template_title = entry_to_load.get("selected_template_title", "(Nincs)")
+                if template_title in self.prompt_combobox['values']:
+                    self.selected_prompt.set(template_title)
+                else:
+                    self.selected_prompt.set("(Nincs)")
+            else: # Régi formátumú előzmény feldolgozása
+                prompt_to_load_title = entry_to_load.get("prompt_template", "(Nincs)")
+                if prompt_to_load_title in self.prompt_combobox['values']:
+                    self.selected_prompt.set(prompt_to_load_title)
+                    self.on_prompt_template_selected() # Ez betölti a sablont a szerkesztőbe
+                else:
+                    self.selected_prompt.set("(Nincs)")
             
+            self.apply_filters()
             self.root.after(1000, lambda: self.load_history_files(entry_to_load, is_startup=True))
             return True
         except Exception as e:
@@ -889,17 +894,15 @@ class LLMContextCollectorApp:
             return False
 
     def load_selected_history_entry(self, event=None):
-        """Az előzmények listából kiválasztott elem betöltése."""
         selected_index = self.history_combobox.current()
         if selected_index < 0: return
         
         entry_to_load = self.history_entries[selected_index]
         if not self._load_history_entry_data(entry_to_load):
             messagebox.showerror("Betöltési Hiba", 
-                f"Hiba az előzmény betöltésekor. Ellenőrizd a konzol kimenetét és hogy a mappa létezik-e:\n{entry_to_load.get('root_folder')}")
+                f"Hiba az előzmény betöltésekor. Ellenőrizd, hogy a mappa létezik-e:\n{entry_to_load.get('root_folder')}")
 
     def load_history_files(self, entry_to_load, is_startup=False):
-        """Betölti a fájlokat a kiválasztott fájlok listájába."""
         self.selected_listbox.delete(0, tk.END)
         loaded_files = entry_to_load.get("selected_files", [])
         for file_path in loaded_files:
@@ -912,7 +915,6 @@ class LLMContextCollectorApp:
         else:
             self.status_text.set(f"Legutóbbi előzmény betöltve. Készen áll.")
     
-    # ... A többi metódus innen változatlan ...
     def show_tree_context_menu(self, event):
         if self.tree.selection():
             self.tree_context_menu.post(event.x_root, event.y_root)
@@ -970,20 +972,17 @@ class LLMContextCollectorApp:
             self.preferences = {}
 
     def copy_prompt_only(self):
-        selected_title = self.selected_prompt.get()
-        if not selected_title or selected_title == "(Nincs)":
-            self.status_text.set("Nincs prompt kiválasztva a másoláshoz.")
+        prompt_content = self.editable_prompt_text.get("1.0", tk.END).strip()
+        if not prompt_content:
+            self.status_text.set("Nincs prompt a szerkesztőben a másoláshoz.")
             return
 
-        for prompt in self.prompts:
-            if prompt['title'] == selected_title:
-                try:
-                    self.root.clipboard_clear()
-                    self.root.clipboard_append(prompt['content'])
-                    self.status_text.set(f"'{selected_title}' prompt vágólapra másolva.")
-                except tk.TclError:
-                    messagebox.showerror("Hiba", "Nem sikerült a vágólapra másolni.")
-                return
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(prompt_content)
+            self.status_text.set("A szerkesztőben lévő prompt vágólapra másolva.")
+        except tk.TclError:
+            messagebox.showerror("Hiba", "Nem sikerült a vágólapra másolni.")
 
     def get_config_file_path(self, filename):
         home = pathlib.Path.home()
@@ -1039,12 +1038,16 @@ class LLMContextCollectorApp:
         self.undo_button.config(state=tk.NORMAL if can_undo else tk.DISABLED)
         self.redo_button.config(state=tk.NORMAL if can_redo else tk.DISABLED)
     
+    # <<< MÓDOSÍTOTT RÉSZ >>>
     def save_history(self):
+        """Elmenti az aktuális állapotot (fájlok, prompt, szűrők) az előzményekbe."""
         folder = self.selected_folder.get()
         if not folder:
             return
         if not self.get_selected_content().strip():
             return
+
+        prompt_text = self.editable_prompt_text.get("1.0", tk.END).strip()
 
         current_state = {
             "timestamp": datetime.now().isoformat(),
@@ -1052,11 +1055,14 @@ class LLMContextCollectorApp:
             "selected_files": list(self.selected_listbox.get(0, tk.END)),
             "extensions_filter": self.ext_text.get("1.0", tk.END).strip(),
             "ignore_filter": self.ignore_text.get("1.0", tk.END).strip(),
-            "prompt_template": self.selected_prompt.get()
+            "prompt_text": prompt_text,
+            "selected_template_title": self.selected_prompt.get()
         }
+        
         history = self.load_json_data(self.history_file_path, is_history=True)
         history.insert(0, current_state)
         history = history[:HISTORY_LIMIT]
+        
         try:
             with open(self.history_file_path, 'w', encoding='utf-8') as f:
                 json.dump(history, f, indent=2, ensure_ascii=False)
@@ -1065,29 +1071,40 @@ class LLMContextCollectorApp:
         except Exception as e:
             messagebox.showerror("Mentési Hiba", f"Nem sikerült az előzményeket menteni:\n{e}")
 
+    # <<< MÓDOSÍTOTT RÉSZ >>>
     def update_history_combobox(self):
+        """Frissíti az előzmények legördülő listáját a mentett adatok alapján."""
         display_values = []
         for entry in self.history_entries:
             try:
                 ts = datetime.fromisoformat(entry.get("timestamp", "")).strftime('%y-%m-%d %H:%M')
                 folder_name = os.path.basename(entry.get("root_folder", "N/A"))
                 file_count = len(entry.get("selected_files", []))
-                display_values.append(f"{folder_name} ({file_count}f) {ts}")
-            except: display_values.append("Invalid Entry")
+                
+                prompt_text = entry.get("prompt_text", "").strip()
+                if not prompt_text:
+                    prompt_preview = "(üres prompt)"
+                else:
+                    prompt_preview = ' '.join(prompt_text.split())[:140]
+                    if len(prompt_text) > 140:
+                        prompt_preview += "..."
+
+                display_values.append(f"{ts} | {prompt_preview} | {folder_name} ({file_count}f)")
+            except: 
+                display_values.append("Invalid Entry")
 
         self.history_combobox['values'] = display_values
         if not self.history_entries:
             self.history_combobox.set("")
 
+    # <<< MÓDOSÍTOTT RÉSZ >>>
     def get_selected_content(self):
+        """Összeállítja a teljes kimeneti szöveget a szerkesztett prompt, a beállítások és a fájlok alapján."""
         final_output_parts = []
         
-        selected_prompt_title = self.selected_prompt.get()
-        if selected_prompt_title and selected_prompt_title != "(Nincs)":
-            for p in self.prompts:
-                if p['title'] == selected_prompt_title:
-                    final_output_parts.append(p['content'])
-                    break
+        prompt_content = self.editable_prompt_text.get("1.0", tk.END).strip()
+        if prompt_content:
+            final_output_parts.append(prompt_content)
         
         global_prefix = self.preferences.get("global_prefix", "").strip()
         if global_prefix:
@@ -1125,7 +1142,7 @@ class LLMContextCollectorApp:
     def copy_to_clipboard(self):
         content = self.get_selected_content()
         if not content.strip(): 
-            messagebox.showinfo("Információ", "Nincs másolható tartalom (se fájl, se prompt/beállítás)."); return
+            messagebox.showinfo("Információ", "Nincs másolható tartalom (se fájl, se prompt)."); return
         self.save_history()
         try:
             self.root.clipboard_clear(); self.root.clipboard_append(content)
@@ -1136,7 +1153,7 @@ class LLMContextCollectorApp:
     def save_to_file(self):
         content = self.get_selected_content()
         if not content.strip(): 
-            messagebox.showinfo("Információ", "Nincs menthető tartalom (se fájl, se prompt/beállítás)."); return
+            messagebox.showinfo("Információ", "Nincs menthető tartalom (se fájl, se prompt)."); return
         self.save_history()
         filename = filedialog.asksaveasfilename(
             defaultextension=".txt", filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")], title="Kontextus mentése fájlba"
@@ -1285,7 +1302,6 @@ class LLMContextCollectorApp:
 
         if not self.tree.exists(item_iid):
             try:
-                # A 'display_name' itt már tartalmazhatja a [REF] előtagot
                 self.tree.insert(parent_id, 'end', iid=item_iid, text=display_name, values=(full_path, item_type), open=False)
             except tk.TclError:
                 pass
