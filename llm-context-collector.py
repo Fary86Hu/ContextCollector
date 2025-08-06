@@ -17,7 +17,6 @@ except ImportError:
     gitignore_parser_available = False
     print("Figyelem: 'gitignore-parser' könyvtár nem található...")
 
-# ... (Konstansok) ...
 DEFAULT_EXTENSIONS = [
     ".razor", ".cs", ".js", ".css", ".html", ".cshtml",
     ".json", ".xml", ".txt", ".md"
@@ -30,7 +29,6 @@ DEFAULT_IGNORE_PATTERNS = [
     ".DS_Store"
 ]
 CHARS_PER_TOKEN_ESTIMATE = 4
-# <<< MÓDOSÍTOTT RÉSZ >>>
 HISTORY_LIMIT = 30
 HISTORY_FILENAME = ".llm_context_collector_history.json"
 PROMPT_FILENAME = ".llm_context_prompts.json"
@@ -339,7 +337,6 @@ class PromptManagerWindow(tk.Toplevel):
 class LLMContextCollectorApp:
     def __init__(self, root):
         self.root = root
-        # <<< MÓDOSÍTOTT RÉSZ >>>
         self.root.title("LLM Kontextus Gyűjtő v9.0 (Szerkeszthető Prompt)")
         self.root.geometry("1250x850")
 
@@ -351,6 +348,8 @@ class LLMContextCollectorApp:
         self.selected_prompt = tk.StringVar()
         self.ref_search_depth = tk.IntVar(value=1)
         self.search_in_content_var = tk.BooleanVar(value=False)
+        self.copy_prompt_var = tk.BooleanVar(value=True)
+        self.copy_global_prompt_var = tk.BooleanVar(value=True)
 
         self.current_gitignore_matcher = None
         self.scan_queue = queue.Queue()
@@ -508,10 +507,8 @@ class LLMContextCollectorApp:
         prompt_edit_button = ttk.Button(prompt_frame, text="Szerkesztés...", command=self.open_prompt_manager)
         prompt_edit_button.grid(row=0, column=2, sticky="e")
         self.update_prompt_combobox()
-        # <<< ÚJ/MÓDOSÍTOTT RÉSZ >>>
         self.prompt_combobox.bind("<<ComboboxSelected>>", self.on_prompt_template_selected)
 
-        # <<< ÚJ/MÓDOSÍTOTT RÉSZ: A SZERKESZTHETŐ PROMPT MEZŐ >>>
         prompt_editor_frame = ttk.LabelFrame(right_vertical_pane, text="Prompt Szerkesztő", padding=5)
         right_vertical_pane.add(prompt_editor_frame, weight=2)
         prompt_editor_frame.rowconfigure(0, weight=1)
@@ -576,6 +573,11 @@ class LLMContextCollectorApp:
         changes_button = ttk.Button(button_frame, text="Változások Vágólapról", command=self.process_changes_from_clipboard)
         changes_button.pack(side=tk.LEFT, padx=(0, 5))
 
+        prompt_check = ttk.Checkbutton(button_frame, text="Prompt", variable=self.copy_prompt_var)
+        prompt_check.pack(side=tk.LEFT, padx=(0, 2))
+        global_prompt_check = ttk.Checkbutton(button_frame, text="Globális", variable=self.copy_global_prompt_var)
+        global_prompt_check.pack(side=tk.LEFT, padx=(0, 5))
+
         copy_button = ttk.Button(button_frame, text="Másolás vágólapra", command=self.copy_to_clipboard)
         copy_button.pack(side=tk.LEFT, padx=(0, 5))
         save_button = ttk.Button(button_frame, text="Mentés fájlba...", command=self.save_to_file)
@@ -586,14 +588,7 @@ class LLMContextCollectorApp:
         self.root.after(100, self.process_update_queue)
         self.root.after(200, self.load_latest_history)
 
-
-    # ==============================================================================
-    # ÚJ ÉS MÓDOSÍTOTT METÓDUSOK
-    # ==============================================================================
-
-    # <<< ÚJ METÓDUS >>>
     def on_prompt_template_selected(self, event=None):
-        """A prompt sablon kiválasztásakor lefutó eseménykezelő."""
         selected_title = self.selected_prompt.get()
         self.editable_prompt_text.delete("1.0", tk.END)
         
@@ -664,31 +659,60 @@ class LLMContextCollectorApp:
         self.show_diff_window(global_explanation, diff_results)
 
     def _parse_llm_response(self, text: str) -> tuple[str, list]:
-        first_block_pattern = re.compile(r'(?:Új Fájl|Fájl):\s*', re.IGNORECASE)
+        """
+        Elemzi az LLM által generált szöveges választ, amely tartalmazhat egy globális magyarázatot
+        és egy vagy több, Markdown-stílusú kódblokkba ágyazott fájlt.
+        
+        Args:
+            text: A vágólapról beolvasott teljes szöveg.
+
+        Returns:
+            Egy tuple, amely tartalmazza a globális magyarázatot (string) és a 
+            kibontott fájladatok listáját (list of dicts).
+        """
+        # A minta, ami az első fájlblokk kezdetét jelöli. A re.MULTILINE miatt a sor elejét keresi.
+        first_block_pattern = re.compile(r'^(Új Fájl|Fájl):', re.MULTILINE | re.IGNORECASE)
         first_match = first_block_pattern.search(text)
         
         global_explanation = ""
+        content_to_parse = text
+
         if first_match:
+            # Az első fájlblokk előtti rész a globális magyarázat.
             global_explanation = text[:first_match.start()].strip()
-        
-        pattern = re.compile(
-            r'(Új Fájl|Fájl):\s*([^\n]+?)\s*\n\n'
-            r'Generated\s+([a-zA-Z]+)\n'
-            r'(.*?)'
-            r'(?=\n(?:Új Fájl|Fájl):|\s*IGNORE_WHEN_COPYING_START|\Z)',
-            re.DOTALL | re.IGNORECASE
+            # A szöveg többi része tartalmazza a feldolgozandó fájlokat.
+            content_to_parse = text[first_match.start():]
+
+        # Reguláris kifejezés a fájlblokkok megtalálására.
+        # 1. csoport: Státusz ("Új Fájl" vagy "Fájl")
+        # 2. csoport: Fájl útvonala
+        # 3. csoport: A kódblokk tartalma
+        file_pattern = re.compile(
+            r'^(Új Fájl|Fájl):\s*([^\n]+?)\s*'  # Státusz és útvonal a sor elején
+            r'\`\`\`[a-zA-Z]*\n'                 # Nyitó kódblokk jelölő (pl. ```csharp)
+            r'(.*?)'                           # A kód tartalma (nem mohó illesztés)
+            r'\n?\`\`\`',                         # Záró kódblokk jelölő
+            re.DOTALL | re.MULTILINE | re.IGNORECASE
         )
-        matches = pattern.findall(text)
+
+        matches = file_pattern.findall(content_to_parse)
+        
         extracted_data = []
-        for status_text, path, _, content in matches:
+        for status_text, path, content in matches:
+            # Útvonal normalizálása (pl. Windows-os '\' cseréje '/')
             normalized_path = path.strip().replace('\\', '/')
-            status = 'new' if 'új fájl' in status_text.lower() else 'modified'
+            
+            # Státusz meghatározása az "új" kulcsszó alapján
+            status = 'new' if 'új' in status_text.lower() else 'modified'
+            
             extracted_data.append({
                 'path': normalized_path,
-                'new_content': content,
+                'new_content': content.strip(),
                 'status': status
             })
+            
         return global_explanation, extracted_data
+
 
     def show_diff_window(self, global_explanation, diff_results):
         project_root = self.selected_folder.get()
@@ -850,9 +874,7 @@ class LLMContextCollectorApp:
         if not self._load_history_entry_data(latest_entry):
             self.status_text.set("Hiba a legutóbbi előzmény betöltésekor. Ellenőrizd a mappát.")
 
-    # <<< MÓDOSÍTOTT RÉSZ >>>
     def _load_history_entry_data(self, entry_to_load):
-        """Belső segédfüggvény egy előzmény-bejegyzés adatainak betöltésére."""
         try:
             folder = entry_to_load.get("root_folder")
             if not folder or not os.path.isdir(folder):
@@ -866,11 +888,9 @@ class LLMContextCollectorApp:
             self.ignore_text.delete("1.0", tk.END)
             self.ignore_text.insert("1.0", entry_to_load.get("ignore_filter", ""))
             
-            # A prompt mező és a sablonválasztó feltöltése
             self.editable_prompt_text.delete("1.0", tk.END)
             prompt_text_from_history = entry_to_load.get("prompt_text")
             
-            # Visszafelé kompatibilitás: ha az új 'prompt_text' mező létezik
             if prompt_text_from_history is not None:
                 self.editable_prompt_text.insert("1.0", prompt_text_from_history)
                 template_title = entry_to_load.get("selected_template_title", "(Nincs)")
@@ -878,11 +898,11 @@ class LLMContextCollectorApp:
                     self.selected_prompt.set(template_title)
                 else:
                     self.selected_prompt.set("(Nincs)")
-            else: # Régi formátumú előzmény feldolgozása
+            else: 
                 prompt_to_load_title = entry_to_load.get("prompt_template", "(Nincs)")
                 if prompt_to_load_title in self.prompt_combobox['values']:
                     self.selected_prompt.set(prompt_to_load_title)
-                    self.on_prompt_template_selected() # Ez betölti a sablont a szerkesztőbe
+                    self.on_prompt_template_selected() 
                 else:
                     self.selected_prompt.set("(Nincs)")
             
@@ -1038,9 +1058,7 @@ class LLMContextCollectorApp:
         self.undo_button.config(state=tk.NORMAL if can_undo else tk.DISABLED)
         self.redo_button.config(state=tk.NORMAL if can_redo else tk.DISABLED)
     
-    # <<< MÓDOSÍTOTT RÉSZ >>>
     def save_history(self):
-        """Elmenti az aktuális állapotot (fájlok, prompt, szűrők) az előzményekbe."""
         folder = self.selected_folder.get()
         if not folder:
             return
@@ -1071,9 +1089,7 @@ class LLMContextCollectorApp:
         except Exception as e:
             messagebox.showerror("Mentési Hiba", f"Nem sikerült az előzményeket menteni:\n{e}")
 
-    # <<< MÓDOSÍTOTT RÉSZ >>>
     def update_history_combobox(self):
-        """Frissíti az előzmények legördülő listáját a mentett adatok alapján."""
         display_values = []
         for entry in self.history_entries:
             try:
@@ -1097,18 +1113,18 @@ class LLMContextCollectorApp:
         if not self.history_entries:
             self.history_combobox.set("")
 
-    # <<< MÓDOSÍTOTT RÉSZ >>>
     def get_selected_content(self):
-        """Összeállítja a teljes kimeneti szöveget a szerkesztett prompt, a beállítások és a fájlok alapján."""
         final_output_parts = []
         
-        prompt_content = self.editable_prompt_text.get("1.0", tk.END).strip()
-        if prompt_content:
-            final_output_parts.append(prompt_content)
+        if self.copy_prompt_var.get():
+            prompt_content = self.editable_prompt_text.get("1.0", tk.END).strip()
+            if prompt_content:
+                final_output_parts.append(prompt_content)
         
-        global_prefix = self.preferences.get("global_prefix", "").strip()
-        if global_prefix:
-            final_output_parts.append(global_prefix)
+        if self.copy_global_prompt_var.get():
+            global_prefix = self.preferences.get("global_prefix", "").strip()
+            if global_prefix:
+                final_output_parts.append(global_prefix)
 
         selected_relative_paths_str = self.selected_listbox.get(0, tk.END)
         if selected_relative_paths_str:
