@@ -15,7 +15,6 @@ try:
 except ImportError:
     gitignore_parser = None
     gitignore_parser_available = False
-    print("Figyelem: 'gitignore-parser' könyvtár nem található...")
 
 DEFAULT_EXTENSIONS = [
     ".razor", ".cs", ".js", ".css", ".html", ".cshtml",
@@ -50,6 +49,7 @@ class DiffWindow(tk.Toplevel):
         self.diff_results = diff_results
         self.project_root = pathlib.Path(project_root)
         self.global_explanation = global_explanation
+        self.view_mode = tk.StringVar(value="diff")
 
         main_pane = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
         main_pane.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
@@ -57,7 +57,7 @@ class DiffWindow(tk.Toplevel):
         left_frame = ttk.Frame(main_pane, padding=(0, 0, 5, 0))
         left_frame.columnconfigure(0, weight=1)
         left_frame.rowconfigure(1, weight=1)
-        main_pane.add(left_frame, weight=1)
+        main_pane.add(left_frame, weight=3)
         
         ttk.Label(left_frame, text="Feldolgozott fájlok:", font="-weight bold").grid(row=0, column=0, sticky="w", pady=(0,5))
         
@@ -74,27 +74,53 @@ class DiffWindow(tk.Toplevel):
         self.file_listbox.bind("<<ListboxSelect>>", self._on_file_select)
 
         right_frame = ttk.Frame(main_pane)
-        right_frame.rowconfigure(1, weight=1)
         right_frame.columnconfigure(0, weight=1)
-        main_pane.add(right_frame, weight=3)
+        main_pane.add(right_frame, weight=5)
 
+        row_idx = 0
         if self.global_explanation:
             explanation_frame = ttk.LabelFrame(right_frame, text="Globális Magyarázat", padding=5)
-            explanation_frame.grid(row=0, column=0, sticky="new", pady=(0, 10))
+            explanation_frame.grid(row=row_idx, column=0, sticky="new", pady=(0, 10))
             explanation_frame.columnconfigure(0, weight=1)
 
-            explanation_text = scrolledtext.ScrolledText(explanation_frame, wrap=tk.WORD, height=5, font=("Segoe UI", 9))
+            explanation_text = scrolledtext.ScrolledText(explanation_frame, wrap=tk.WORD, height=10, font=("Segoe UI", 9))
             explanation_text.pack(fill="both", expand=True)
             explanation_text.insert("1.0", self.global_explanation)
             explanation_text.config(state=tk.DISABLED, background=self.cget('bg'))
+            row_idx += 1
         
-        self.text_widget = scrolledtext.ScrolledText(right_frame, wrap=tk.WORD, font=("Consolas", 10))
-        self.text_widget.grid(row=1 if self.global_explanation else 0, column=0, sticky="nsew")
+        view_switcher_frame = ttk.Frame(right_frame)
+        view_switcher_frame.grid(row=row_idx, column=0, sticky="w", pady=(0, 5))
+        ttk.Radiobutton(view_switcher_frame, text="Különbségek", variable=self.view_mode, value="diff", command=self._switch_view).pack(side=tk.LEFT)
+        ttk.Radiobutton(view_switcher_frame, text="Side-by-Side", variable=self.view_mode, value="sbs", command=self._switch_view).pack(side=tk.LEFT, padx=10)
+        row_idx += 1
+        
+        right_frame.rowconfigure(row_idx, weight=1)
 
+        self.text_widget = scrolledtext.ScrolledText(right_frame, wrap=tk.WORD, font=("Consolas", 10))
+        self.text_widget.grid(row=row_idx, column=0, sticky="nsew")
         self.text_widget.tag_configure("addition", foreground="#008800")
         self.text_widget.tag_configure("deletion", foreground="#CC0000")
         self.text_widget.tag_configure("header", foreground="#0000FF", font=("Consolas", 11, "bold"))
         self.text_widget.tag_configure("info", foreground="grey", font=("Consolas", 10, "italic"))
+
+        self.sbs_pane = ttk.PanedWindow(right_frame, orient=tk.HORIZONTAL)
+        
+        original_frame = ttk.LabelFrame(self.sbs_pane, text="Eredeti Tartalom")
+        self.original_text = scrolledtext.ScrolledText(original_frame, wrap=tk.WORD, font=("Consolas", 10), state=tk.DISABLED)
+        self.original_text.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
+        self.sbs_pane.add(original_frame, weight=1)
+        self.original_text.tag_configure("sbs_deletion", background="#ffe0e0")
+
+        modified_frame = ttk.LabelFrame(self.sbs_pane, text="Módosított Tartalom")
+        self.modified_text = scrolledtext.ScrolledText(modified_frame, wrap=tk.WORD, font=("Consolas", 10), state=tk.DISABLED)
+        self.modified_text.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
+        self.sbs_pane.add(modified_frame, weight=1)
+        self.modified_text.tag_configure("sbs_addition", background="#e0ffe0")
+
+        self._scroll_sync_active = False
+        self.original_text.config(yscrollcommand=self._sync_scroll_original)
+        self.modified_text.config(yscrollcommand=self._sync_scroll_modified)
 
         button_frame = ttk.Frame(self, padding=(10, 0, 10, 10))
         button_frame.pack(fill=tk.X)
@@ -104,9 +130,22 @@ class DiffWindow(tk.Toplevel):
         self._populate_file_list()
         self.protocol("WM_DELETE_WINDOW", self.destroy)
         
+        self._switch_view()
         if self.diff_results:
             self.file_listbox.selection_set(0)
             self._on_file_select()
+
+    def _sync_scroll_original(self, *args):
+        if not self._scroll_sync_active:
+            self._scroll_sync_active = True
+            self.modified_text.yview_moveto(args[0])
+            self._scroll_sync_active = False
+
+    def _sync_scroll_modified(self, *args):
+        if not self._scroll_sync_active:
+            self._scroll_sync_active = True
+            self.original_text.yview_moveto(args[0])
+            self._scroll_sync_active = False
 
     def _populate_file_list(self):
         self.file_listbox.delete(0, tk.END)
@@ -135,41 +174,99 @@ class DiffWindow(tk.Toplevel):
         else:
             self.file_listbox.itemconfig(index, {'bg': ''})
 
+    def _switch_view(self):
+        content_row = 1
+        if self.global_explanation:
+            content_row = 2
+        
+        if self.view_mode.get() == "sbs":
+            self.text_widget.grid_remove()
+            self.sbs_pane.grid(row=content_row, column=0, sticky="nsew")
+        else:
+            self.sbs_pane.grid_remove()
+            self.text_widget.grid(row=content_row, column=0, sticky="nsew")
+        
+        self._on_file_select()
 
     def _on_file_select(self, event=None):
         selection_indices = self.file_listbox.curselection()
         if not selection_indices:
-            self._display_diff(None)
+            self._display_views(None)
             return
         selected_index = selection_indices[0]
-        self._display_diff(self.diff_results[selected_index])
+        self._display_views(self.diff_results[selected_index])
 
-    def _display_diff(self, result):
+    def _display_views(self, result):
         self.text_widget.config(state=tk.NORMAL)
+        self.original_text.config(state=tk.NORMAL)
+        self.modified_text.config(state=tk.NORMAL)
+
         self.text_widget.delete("1.0", tk.END)
+        self.original_text.delete("1.0", tk.END)
+        self.modified_text.delete("1.0", tk.END)
 
         if not result:
             self.text_widget.insert(tk.END, "Válassz egy fájlt a listából a változások megtekintéséhez.", "info")
-            self.text_widget.config(state=tk.DISABLED)
-            return
-
-        status = result['status'].replace('_', ' ').upper()
-        header_text = f"--- {status}: {result['path']} ---\n"
-        self.text_widget.insert(tk.END, header_text, "header")
-
-        if 'diff' not in result or not result['diff']:
-            self.text_widget.insert(tk.END, "\n(Nincs megjeleníthető változás vagy csak a tartalom azonos)\n", "info")
         else:
-            for line in result['diff']:
-                line_with_newline = line + '\n'
-                if line.startswith('+ '):
-                    self.text_widget.insert(tk.END, line_with_newline, "addition")
-                elif line.startswith('- '):
-                    self.text_widget.insert(tk.END, line_with_newline, "deletion")
-                elif not line.startswith('---') and not line.startswith('+++') and not line.startswith('@@'):
-                    self.text_widget.insert(tk.END, "  " + line_with_newline)
+            status = result['status'].replace('_', ' ').upper()
+            header_text = f"--- {status}: {result['path']} ---\n"
+            self.text_widget.insert(tk.END, header_text, "header")
+
+            if 'diff' not in result or not result['diff']:
+                self.text_widget.insert(tk.END, "\n(Nincs megjeleníthető változás vagy csak a tartalom azonos)\n", "info")
+            else:
+                for line in result['diff']:
+                    line_with_newline = line + '\n'
+                    if line.startswith('+ '):
+                        self.text_widget.insert(tk.END, line_with_newline, "addition")
+                    elif line.startswith('- '):
+                        self.text_widget.insert(tk.END, line_with_newline, "deletion")
+                    elif not line.startswith('---') and not line.startswith('+++') and not line.startswith('@@'):
+                        self.text_widget.insert(tk.END, "  " + line_with_newline)
+            
+            self._highlight_sbs_diffs(result)
         
         self.text_widget.config(state=tk.DISABLED)
+        self.original_text.config(state=tk.DISABLED)
+        self.modified_text.config(state=tk.DISABLED)
+
+    def _highlight_sbs_diffs(self, result):
+        if not result:
+            return
+
+        old_content = result.get('old_content', '')
+        new_content = result.get('new_content', '')
+
+        old_lines = old_content.splitlines()
+        new_lines = new_content.splitlines()
+
+        matcher = difflib.SequenceMatcher(None, old_lines, new_lines)
+
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag == 'equal':
+                for line in old_lines[i1:i2]:
+                    self.original_text.insert(tk.END, line + '\n')
+                for line in new_lines[j1:j2]:
+                    self.modified_text.insert(tk.END, line + '\n')
+            
+            else:
+                if i1 < i2:
+                    for line in old_lines[i1:i2]:
+                        self.original_text.insert(tk.END, line + '\n', "sbs_deletion")
+                
+                if j1 < j2:
+                    for line in new_lines[j1:j2]:
+                        self.modified_text.insert(tk.END, line + '\n', "sbs_addition")
+
+                deleted_count = i2 - i1
+                inserted_count = j2 - j1
+                if deleted_count < inserted_count:
+                    for _ in range(inserted_count - deleted_count):
+                        self.original_text.insert(tk.END, '\n')
+                elif inserted_count < deleted_count:
+                    for _ in range(deleted_count - inserted_count):
+                        self.modified_text.insert(tk.END, '\n')
+
 
     def _accept_selected_changes(self):
         selected_indices = self.file_listbox.curselection()
@@ -357,6 +454,7 @@ class LLMContextCollectorApp:
         self.all_tree_items_data = []
         self.all_tree_items_map = {}
         self.file_path_to_iid_map = {}
+        self.files_to_preserve_on_reload = set()
         
         self.history_file_path = self.get_config_file_path(HISTORY_FILENAME)
         self.history_entries = self.load_json_data(self.history_file_path, is_history=True)
@@ -439,7 +537,7 @@ class LLMContextCollectorApp:
         self.tree.bind("<Button-2>", self.show_tree_context_menu)
 
         middle_pane = ttk.Frame(center_pane, padding=(5,0,5,0))
-        center_pane.add(middle_pane, weight=0)
+        center_pane.add(middle_pane, weight=1)
         button_panel = ttk.Frame(middle_pane)
         button_panel.pack(anchor=tk.N)
         
@@ -465,25 +563,54 @@ class LLMContextCollectorApp:
         self.ref_search_depth_spinbox.pack(side=tk.LEFT)
         
         filter_frame = ttk.LabelFrame(button_panel, text="Szűrők", padding=5)
-        filter_frame.pack(pady=5, fill=tk.X)
+        filter_frame.pack(pady=5, fill=tk.X, expand=True)
         filter_frame.columnconfigure(0, weight=1)
 
-        ttk.Label(filter_frame, text="Kiterjesztések:").grid(row=0, column=0, sticky="w", padx=2, pady=(0, 2))
-        self.ext_text = tk.Text(filter_frame, height=6, wrap="word", width=20)
-        self.ext_text.grid(row=1, column=0, sticky="ew", padx=2, pady=(0, 5))
-        self.ext_text.insert("1.0", ", ".join(DEFAULT_EXTENSIONS))
+        self.extension_vars = {ext: tk.BooleanVar(value=True) for ext in DEFAULT_EXTENSIONS}
+        ttk.Label(filter_frame, text="Aktív fájltípusok:").grid(row=0, column=0, columnspan=2, sticky="w", padx=2, pady=(0, 2))
         
-        ttk.Label(filter_frame, text="Kizárások:").grid(row=2, column=0, sticky="w", padx=2, pady=(0, 2))
+        ext_container = ttk.Frame(filter_frame)
+        ext_container.grid(row=1, column=0, columnspan=2, sticky="nsew", pady=(0, 5))
+        ext_container.rowconfigure(0, weight=1)
+        ext_container.columnconfigure(0, weight=1)
+        ext_canvas = tk.Canvas(ext_container, borderwidth=0, highlightthickness=0, height=130)
+        ext_scrollbar = ttk.Scrollbar(ext_container, orient="vertical", command=ext_canvas.yview)
+        self.ext_checklist_frame = ttk.Frame(ext_canvas)
+        ext_canvas.configure(yscrollcommand=ext_scrollbar.set)
+        ext_scrollbar.pack(side="right", fill="y")
+        ext_canvas.pack(side="left", fill="both", expand=True)
+        ext_canvas_window = ext_canvas.create_window((0, 0), window=self.ext_checklist_frame, anchor="nw")
+
+        def on_ext_frame_configure(event):
+            ext_canvas.configure(scrollregion=ext_canvas.bbox("all"))
+        self.ext_checklist_frame.bind("<Configure>", on_ext_frame_configure)
+        
+        def on_canvas_configure(event):
+            ext_canvas.itemconfig(ext_canvas_window, width=event.width)
+        ext_canvas.bind("<Configure>", on_canvas_configure, add="+")
+
+        add_ext_frame = ttk.Frame(filter_frame)
+        add_ext_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(5,0))
+        add_ext_frame.columnconfigure(0, weight=1)
+        
+        self.new_ext_entry = ttk.Entry(add_ext_frame, font=("Segoe UI", 8))
+        self.new_ext_entry.grid(row=0, column=0, sticky="ew", padx=(0,5))
+        add_ext_button = ttk.Button(add_ext_frame, text="+", command=self._add_extension, width=3)
+        add_ext_button.grid(row=0, column=1)
+        
+        self._rebuild_extension_checklist()
+
+        ttk.Label(filter_frame, text="Kizárások:").grid(row=3, column=0, columnspan=2, sticky="w", padx=2, pady=(2, 2))
         self.ignore_text = tk.Text(filter_frame, height=12, wrap="none", width=20)
-        self.ignore_text.grid(row=3, column=0, sticky="ew", padx=2, pady=(0, 0))
+        self.ignore_text.grid(row=4, column=0, columnspan=2, sticky="ew", padx=2, pady=(0, 0))
         self.ignore_text.insert("1.0", "\n".join(DEFAULT_IGNORE_PATTERNS))
         
         ignore_xsb = ttk.Scrollbar(filter_frame, orient='horizontal', command=self.ignore_text.xview)
-        ignore_xsb.grid(row=4, column=0, sticky='ew', pady=(0, 5))
+        ignore_xsb.grid(row=5, column=0, columnspan=2, sticky='ew', pady=(0, 5))
         self.ignore_text.configure(xscrollcommand=ignore_xsb.set)
 
         apply_filters_button = ttk.Button(filter_frame, text="Alkalmaz és Újratölt", command=self.apply_filters)
-        apply_filters_button.grid(row=5, column=0, sticky="ew", pady=(5,0))
+        apply_filters_button.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(5,0))
 
         right_pane = ttk.Frame(center_pane, padding=(5,0,0,0))
         center_pane.add(right_pane, weight=3)
@@ -588,6 +715,33 @@ class LLMContextCollectorApp:
         self.root.after(100, self.process_update_queue)
         self.root.after(200, self.load_latest_history)
 
+    def _rebuild_extension_checklist(self):
+        for widget in self.ext_checklist_frame.winfo_children():
+            widget.destroy()
+
+        self.ext_checklist_frame.columnconfigure(0, weight=1)
+        self.ext_checklist_frame.columnconfigure(1, weight=1)
+        
+        sorted_exts = sorted(self.extension_vars.keys())
+        
+        for i, ext in enumerate(sorted_exts):
+            var = self.extension_vars[ext]
+            cb = ttk.Checkbutton(self.ext_checklist_frame, text=ext, variable=var)
+            cb.grid(row=i // 2, column=i % 2, sticky="w", padx=2, pady=1)
+
+    def _add_extension(self):
+        new_ext = self.new_ext_entry.get().strip().lower()
+        if not new_ext:
+            return
+        if not new_ext.startswith('.'):
+            new_ext = '.' + new_ext
+        
+        if new_ext not in self.extension_vars:
+            self.extension_vars[new_ext] = tk.BooleanVar(value=True)
+            self._rebuild_extension_checklist()
+            
+        self.new_ext_entry.delete(0, tk.END)
+
     def on_prompt_template_selected(self, event=None):
         selected_title = self.selected_prompt.get()
         self.editable_prompt_text.delete("1.0", tk.END)
@@ -652,25 +806,13 @@ class LLMContextCollectorApp:
             
             diff_results.append({
                 'path': rel_path, 'diff': diff_list, 'status': status,
-                'new_content': new_content_clean,
+                'new_content': new_content_clean, 'old_content': old_content
             })
         
         self.status_text.set("Kész. Diff ablak megnyitása...")
         self.show_diff_window(global_explanation, diff_results)
 
     def _parse_llm_response(self, text: str) -> tuple[str, list]:
-        """
-        Elemzi az LLM által generált szöveges választ, amely tartalmazhat egy globális magyarázatot
-        és egy vagy több, Markdown-stílusú kódblokkba ágyazott fájlt.
-        
-        Args:
-            text: A vágólapról beolvasott teljes szöveg.
-
-        Returns:
-            Egy tuple, amely tartalmazza a globális magyarázatot (string) és a 
-            kibontott fájladatok listáját (list of dicts).
-        """
-        # A minta, ami az első fájlblokk kezdetét jelöli. A re.MULTILINE miatt a sor elejét keresi.
         first_block_pattern = re.compile(r'^(Új Fájl|Fájl):', re.MULTILINE | re.IGNORECASE)
         first_match = first_block_pattern.search(text)
         
@@ -678,20 +820,14 @@ class LLMContextCollectorApp:
         content_to_parse = text
 
         if first_match:
-            # Az első fájlblokk előtti rész a globális magyarázat.
             global_explanation = text[:first_match.start()].strip()
-            # A szöveg többi része tartalmazza a feldolgozandó fájlokat.
             content_to_parse = text[first_match.start():]
 
-        # Reguláris kifejezés a fájlblokkok megtalálására.
-        # 1. csoport: Státusz ("Új Fájl" vagy "Fájl")
-        # 2. csoport: Fájl útvonala
-        # 3. csoport: A kódblokk tartalma
         file_pattern = re.compile(
-            r'^(Új Fájl|Fájl):\s*([^\n]+?)\s*'  # Státusz és útvonal a sor elején
-            r'\`\`\`[a-zA-Z]*\n'                 # Nyitó kódblokk jelölő (pl. ```csharp)
-            r'(.*?)'                           # A kód tartalma (nem mohó illesztés)
-            r'\n?\`\`\`',                         # Záró kódblokk jelölő
+            r'^(Új Fájl|Fájl):\s*([^\n]+?)\s*'
+            r'\`\`\`[a-zA-Z]*\n'
+            r'(.*?)'
+            r'\n?\`\`\`',
             re.DOTALL | re.MULTILINE | re.IGNORECASE
         )
 
@@ -699,10 +835,7 @@ class LLMContextCollectorApp:
         
         extracted_data = []
         for status_text, path, content in matches:
-            # Útvonal normalizálása (pl. Windows-os '\' cseréje '/')
             normalized_path = path.strip().replace('\\', '/')
-            
-            # Státusz meghatározása az "új" kulcsszó alapján
             status = 'new' if 'új' in status_text.lower() else 'modified'
             
             extracted_data.append({
@@ -878,13 +1011,22 @@ class LLMContextCollectorApp:
         try:
             folder = entry_to_load.get("root_folder")
             if not folder or not os.path.isdir(folder):
-                print(f"Figyelmeztetés: Előzményben szereplő mappa nem található: {folder}")
                 return False
 
             self.selected_folder.set(folder)
             
-            self.ext_text.delete("1.0", tk.END)
-            self.ext_text.insert("1.0", entry_to_load.get("extensions_filter", ""))
+            history_ext_str = entry_to_load.get("extensions_filter", "")
+            history_exts = {ext.strip() for ext in history_ext_str.split(',') if ext.strip()}
+            
+            for ext in history_exts:
+                if ext not in self.extension_vars:
+                    self.extension_vars[ext] = tk.BooleanVar(value=False)
+
+            for ext, var in self.extension_vars.items():
+                var.set(ext in history_exts)
+            
+            self._rebuild_extension_checklist()
+
             self.ignore_text.delete("1.0", tk.END)
             self.ignore_text.insert("1.0", entry_to_load.get("ignore_filter", ""))
             
@@ -1071,7 +1213,7 @@ class LLMContextCollectorApp:
             "timestamp": datetime.now().isoformat(),
             "root_folder": folder,
             "selected_files": list(self.selected_listbox.get(0, tk.END)),
-            "extensions_filter": self.ext_text.get("1.0", tk.END).strip(),
+            "extensions_filter": ", ".join(self.get_current_extensions()),
             "ignore_filter": self.ignore_text.get("1.0", tk.END).strip(),
             "prompt_text": prompt_text,
             "selected_template_title": self.selected_prompt.get()
@@ -1182,8 +1324,7 @@ class LLMContextCollectorApp:
                 messagebox.showerror("Mentési Hiba", f"Hiba: {e}"); self.status_text.set("Mentési hiba.")
 
     def get_current_extensions(self):
-        ext_string = self.ext_text.get("1.0", tk.END).strip()
-        return [ext.strip().lower() for ext in ext_string.split(',') if ext.strip()]
+        return [ext for ext, var in self.extension_vars.items() if var.get()]
 
     def get_current_ignore_patterns(self):
         ignore_string = self.ignore_text.get("1.0", tk.END).strip()
@@ -1194,6 +1335,7 @@ class LLMContextCollectorApp:
         if folder: self.selected_folder.set(folder); self.apply_filters()
 
     def apply_filters(self):
+        self.files_to_preserve_on_reload = set(self.selected_listbox.get(0, tk.END))
         folder = self.selected_folder.get()
         if not folder or not os.path.isdir(folder): messagebox.showwarning("Hiba", "Valid mappa kell."); return
         self.status_text.set("Szkennelés és szűrés..."); self.root.update_idletasks()
@@ -1283,6 +1425,22 @@ class LLMContextCollectorApp:
                     self.all_tree_items_map = {item[3]: (item[0], item[1], item[2]) for item in data}
                     self.file_path_to_iid_map = {item[3]: item[3] for item in data}
                     self.filter_treeview()
+
+                    root_path = self.selected_folder.get()
+                    if root_path and self.files_to_preserve_on_reload:
+                        base_path = pathlib.Path(root_path)
+                        all_valid_files_after_filter = {
+                            pathlib.Path(item[3]).relative_to(base_path).as_posix()
+                            for item in self.all_tree_items_data if item[1] == 'file'
+                        }
+                        surviving_files = self.files_to_preserve_on_reload.intersection(all_valid_files_after_filter)
+
+                        if surviving_files:
+                            for file_path in sorted(list(surviving_files)):
+                                self.selected_listbox.insert(tk.END, file_path)
+                            self.update_listbox_based_counts()
+                            self._save_listbox_state()
+                    self.files_to_preserve_on_reload = set()
                     self.status_text.set("Fa feltöltve.")
                 elif message_type == 'scan_complete': self.status_text.set("Szkennelés befejezve.")
                 elif message_type == 'update_counts':
@@ -1594,6 +1752,6 @@ if __name__ == "__main__":
     try: style.theme_use('vista')
     except tk.TclError:
         try: style.theme_use('clam')
-        except tk.TclError: print("Figyelmeztetés: Nem található megfelelő ttk téma.")
+        except tk.TclError: pass
     app = LLMContextCollectorApp(root)
     root.mainloop()
