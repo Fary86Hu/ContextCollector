@@ -1608,125 +1608,131 @@ class LLMContextCollectorApp:
         self.preview_text.config(state=tk.DISABLED)
 
     def find_related_references(self):
-        search_depth = self.ref_search_depth.get()
-        if search_depth == 0:
-            self.status_text.set("Referencia keresés mélysége 0, nincs művelet.")
-            return
+            search_depth = self.ref_search_depth.get()
+            if search_depth == 0:
+                self.status_text.set("Referencia keresés mélysége 0, nincs művelet.")
+                return
 
-        target_extensions = {".cs", ".razor", ".cshtml"}
-        root_folder = self.selected_folder.get()
-        if not root_folder:
-            messagebox.showerror("Hiba", "Nincs projekt mappa kiválasztva.")
-            return
-        base_path = pathlib.Path(root_folder)
+            target_extensions = {".cs", ".razor", ".cshtml"}
+            root_folder = self.selected_folder.get()
+            if not root_folder:
+                messagebox.showerror("Hiba", "Nincs projekt mappa kiválasztva.")
+                return
+            base_path = pathlib.Path(root_folder)
 
-        initial_selected_ids = set()
-        tree_selection = self.tree.selection()
-        list_selection_indices = self.selected_listbox.curselection()
+            initial_selected_ids = set()
+            tree_selection = self.tree.selection()
+            list_selection_indices = self.selected_listbox.curselection()
 
-        if tree_selection:
-            initial_selected_ids.update(tree_selection)
-        if list_selection_indices:
-            for i in list_selection_indices:
-                rel_path = self.selected_listbox.get(i)
-                abs_path = str(base_path / rel_path)
-                if abs_path in self.file_path_to_iid_map:
-                    initial_selected_ids.add(self.file_path_to_iid_map[abs_path])
+            if tree_selection:
+                initial_selected_ids.update(tree_selection)
+            if list_selection_indices:
+                for i in list_selection_indices:
+                    rel_path = self.selected_listbox.get(i)
+                    abs_path = str(base_path / rel_path)
+                    if abs_path in self.file_path_to_iid_map:
+                        initial_selected_ids.add(self.file_path_to_iid_map[abs_path])
 
-        if not initial_selected_ids:
-            messagebox.showinfo("Információ", "Válassz ki C# vagy Razor fájl(oka)t a fában vagy a listában a keresés indításához.")
-            return
+            if not initial_selected_ids:
+                messagebox.showinfo("Információ", "Válassz ki C# vagy Razor fájl(oka)t a fában vagy a listában a keresés indításához.")
+                return
 
-        start_files_abs = set()
-        for item_id in initial_selected_ids:
-            item_values = self.tree.item(item_id, 'values')
-            if not item_values: continue
-            full_path, item_type = item_values
+            start_files_abs = set()
+            for item_id in initial_selected_ids:
+                item_values = self.tree.item(item_id, 'values')
+                if not item_values: continue
+                full_path, item_type = item_values
 
-            if item_type == 'file' and pathlib.Path(full_path).suffix.lower() in target_extensions:
-                start_files_abs.add(full_path)
-            elif item_type == 'folder':
-                for descendant_id in self._get_all_descendants(item_id):
-                    desc_item = self.all_tree_items_map.get(descendant_id)
-                    if desc_item and desc_item[1] == 'file' and pathlib.Path(descendant_id).suffix.lower() in target_extensions:
-                        start_files_abs.add(descendant_id)
+                if item_type == 'file' and pathlib.Path(full_path).suffix.lower() in target_extensions:
+                    start_files_abs.add(full_path)
+                elif item_type == 'folder':
+                    for descendant_id in self._get_all_descendants(item_id):
+                        desc_item = self.all_tree_items_map.get(descendant_id)
+                        if desc_item and desc_item[1] == 'file' and pathlib.Path(descendant_id).suffix.lower() in target_extensions:
+                            start_files_abs.add(descendant_id)
 
-        if not start_files_abs:
-            messagebox.showinfo("Információ", "A kiválasztás nem tartalmaz C# vagy Razor fájlokat.")
-            return
+            if not start_files_abs:
+                messagebox.showinfo("Információ", "A kiválasztás nem tartalmaz C# vagy Razor fájlokat.")
+                return
 
-        self.status_text.set(f"Referenciák keresése... (Mélység: {search_depth})"); self.root.update_idletasks()
+            self.status_text.set(f"Referenciák keresése... (Mélység: {search_depth})"); self.root.update_idletasks()
 
-        files_to_scan_next = set(start_files_abs)
-        all_found_files_abs = set()
-        all_scanned_files_abs = set()
+            files_to_scan_next = set(start_files_abs)
+            all_found_files_abs = set()
+            all_scanned_files_abs = set()
 
-        for i in range(search_depth):
-            if not files_to_scan_next:
-                break
+            for i in range(search_depth):
+                if not files_to_scan_next:
+                    break
+                
+                self.status_text.set(f"Keresés, {i+1}. szint... ({len(files_to_scan_next)} fájl)")
+                self.root.update_idletasks()
+                
+                current_level_files_to_scan = files_to_scan_next - all_scanned_files_abs
+                files_to_scan_next = set()
+                potential_type_names = set()
+
+                for file_path in current_level_files_to_scan:
+                    all_scanned_files_abs.add(file_path)
+                    try:
+                        content = self._read_file_content_safely(file_path)
+                        
+                        if content:
+                            found_constructs = set(re.findall(POTENTIAL_TYPE_REGEX, content))
+                            for construct in found_constructs:
+                                clean_construct = re.sub(r'[^a-zA-Z0-9_]', ' ', construct)
+                                for name in clean_construct.split():
+                                    if name and name[0].isupper() and \
+                                    not re.fullmatch(CSHARP_KEYWORDS_REGEX, name) and \
+                                    not re.fullmatch(CSHARP_COMMON_TYPES_REGEX, name):
+                                        potential_type_names.add(name)
+                    except Exception as e:
+                        print(f"Hiba a ref. kereséshez fájl olvasásakor {file_path}: {e}")
+
+                if not potential_type_names:
+                    continue
+
+                extended_type_names = set(potential_type_names)
+                for name in potential_type_names:
+                    if len(name) > 2 and name.startswith('I') and name[1].isupper():
+                        implementation_name = name[1:]
+                        extended_type_names.add(implementation_name)
+
+                for type_name in extended_type_names:
+                    target_filenames = {f"{type_name}.cs", f"{type_name}.razor", f"{type_name}.cshtml", f"I{type_name}.cs"}
+                    for _, _, disp_name, full_path in self.all_tree_items_data:
+                        if disp_name in target_filenames:
+                            if full_path not in all_scanned_files_abs:
+                                files_to_scan_next.add(full_path)
+                            all_found_files_abs.add(full_path)
             
-            self.status_text.set(f"Keresés, {i+1}. szint... ({len(files_to_scan_next)} fájl)")
-            self.root.update_idletasks()
-            
-            current_level_files_to_scan = files_to_scan_next - all_scanned_files_abs
-            files_to_scan_next = set()
-            potential_type_names = set()
+            if not all_found_files_abs:
+                self.status_text.set("Nem található új kapcsolódó fájl.")
+                return
 
-            for file_path in current_level_files_to_scan:
-                all_scanned_files_abs.add(file_path)
+            found_ref_files_rel = set()
+            for abs_path in all_found_files_abs:
                 try:
-                    content = self._read_file_content_safely(file_path)
-                    
-                    if content:
-                        found_constructs = set(re.findall(POTENTIAL_TYPE_REGEX, content))
-                        for construct in found_constructs:
-                            clean_construct = re.sub(r'[^a-zA-Z0-9_]', ' ', construct)
-                            for name in clean_construct.split():
-                                if name and name[0].isupper() and \
-                                   not re.fullmatch(CSHARP_KEYWORDS_REGEX, name) and \
-                                   not re.fullmatch(CSHARP_COMMON_TYPES_REGEX, name):
-                                    potential_type_names.add(name)
-                except Exception as e:
-                    print(f"Hiba a ref. kereséshez fájl olvasásakor {file_path}: {e}")
-
-            if not potential_type_names:
-                continue
-
-            for type_name in potential_type_names:
-                target_filenames = {f"{type_name}.cs", f"{type_name}.razor", f"{type_name}.cshtml", f"I{type_name}.cs"}
-                for _, _, disp_name, full_path in self.all_tree_items_data:
-                    if disp_name in target_filenames:
-                        if full_path not in all_scanned_files_abs:
-                            files_to_scan_next.add(full_path)
-                        all_found_files_abs.add(full_path)
-        
-        if not all_found_files_abs:
-            self.status_text.set("Nem található új kapcsolódó fájl.")
-            return
-
-        found_ref_files_rel = set()
-        for abs_path in all_found_files_abs:
-            try:
-                found_ref_files_rel.add(pathlib.Path(abs_path).relative_to(base_path).as_posix())
-            except ValueError:
-                pass
-        
-        current_list_items = set(self.selected_listbox.get(0, tk.END))
-        start_files_rel = {pathlib.Path(p).relative_to(base_path).as_posix() for p in start_files_abs}
-        
-        newly_added = found_ref_files_rel - current_list_items - start_files_rel
-        
-        if newly_added:
-            all_items = sorted(list(current_list_items.union(newly_added)))
-            self.selected_listbox.delete(0, tk.END)
-            for rel_path in all_items:
-                self.selected_listbox.insert(tk.END, rel_path)
-            self.status_text.set(f"{len(newly_added)} új kapcsolódó fájl hozzáadva.")
-            self.update_listbox_based_counts()
-            self._save_listbox_state()
-        else:
-            self.status_text.set("Nem található új kapcsolódó fájl (már listázva vagy a kiindulási fájlok részei).")
-
+                    found_ref_files_rel.add(pathlib.Path(abs_path).relative_to(base_path).as_posix())
+                except ValueError:
+                    pass
+            
+            current_list_items = set(self.selected_listbox.get(0, tk.END))
+            start_files_rel = {pathlib.Path(p).relative_to(base_path).as_posix() for p in start_files_abs}
+            
+            newly_added = found_ref_files_rel - current_list_items - start_files_rel
+            
+            if newly_added:
+                all_items = sorted(list(current_list_items.union(newly_added)))
+                self.selected_listbox.delete(0, tk.END)
+                for rel_path in all_items:
+                    self.selected_listbox.insert(tk.END, rel_path)
+                self.status_text.set(f"{len(newly_added)} új kapcsolódó fájl hozzáadva.")
+                self.update_listbox_based_counts()
+                self._save_listbox_state()
+            else:
+                self.status_text.set("Nem található új kapcsolódó fájl (már listázva vagy a kiindulási fájlok részei).")
+                
     def update_listbox_based_counts(self):
         threading.Thread(target=self.update_counts_thread, daemon=True).start()
 
